@@ -540,3 +540,84 @@ compare_DB_jums %>%
 
 **Wikidata** présente l'avantage de faciliter la récupération de la données par des requêtes automatisables. De plus il semblerait que les données récupérées grâce aux Wikidata préssentent une actualité et une valeur symbolique plus importante que dans les autres BD (car renseignées par des personnes non explicitement rattachées à une institution). EN terme d'exhausitivité, si les données Wikidata peuvent être moins précises à des échelles très fines (niveau des communes) elles ont le grand avantage d'offrir une couverture à échelle mondiale et de permettre ainsi d'aborder la question des jumaleges à échelle globale. 
 
+# Visualiser les résultats de liens de jumelages
+
+## Visualisation à l'échelle des pays avec un diagramme de Sankey
+
+Regroupement des données de liens de **edges** en fonction de leur pays de localisation et agrégation du nombre de jumelages par pays associés.
+```{r add country info to tib edges, echo=FALSE}
+# permet de ne conserver qu'un seul couple place/partner (pas de redondance)
+#edges=readRDS("data/twinnings/edges.RDS")
+edges_uniq <- edges %>% filter(place<partner)
+
+# jointures du pays associé à chaque partner/ place d'un jumelage
+edges_country_place <- left_join(edges_uniq, nodes_ucountry, by=c("place"="node")) 
+edges_country_place <- rename(edges_country_place, "countryPlace" = "country")
+edges_country_place <- rename(edges_country_place, "countryLabelPlace" = "countryLabel") %>%
+  clean_wikidata_table() %>% 
+  select(place, placeLabel, countryPlace, countryLabelPlace, partner, partnerLabel)
+
+
+edges_country_partner <- left_join(edges_uniq, nodes_ucountry, by=c("partner"="node"))
+edges_country_partner <- rename(edges_country_partner, "countryPartner" = "country")
+edges_country_partner <- rename(edges_country_partner, "countryLabelPartner" = "countryLabel") %>%
+  clean_wikidata_table() %>% 
+  select(place, placeLabel, partner, partnerLabel, countryPartner, countryLabelPartner)
+
+edges_country <- left_join(edges_country_place, edges_country_partner)
+```
+
+```{r group edges by country, echo=FALSE}
+# agregation à l'échelle des pays
+egdes_country_group <- edges_country %>%
+  group_by(countryPlace, countryLabelPlace, countryPartner, countryLabelPartner) %>% 
+  count() %>% 
+  arrange(desc(n))
+
+# sélection d'un couple de pays (France/Germanie OU Germany/France)
+egdes_country_group_uniq <- egdes_country_group %>% filter(countryLabelPlace<=countryLabelPartner)
+```
+
+```{r select most represented countries, echo=FALSE}
+# sélection des pays associés par au moins 50 jumelages
+egdes_country_group_first <- egdes_country_group_uniq %>%
+  arrange(desc(n)) %>% 
+  filter(n>50)
+```
+
+
+Diagramme de Sankey des pays associés dans au moins 50 relations de jumelages : 
+
+```{r sankey diag, fig.width=10,fig.height=5, echo=FALSE}
+# Libraries
+library(tidyverse)
+library(viridis)
+library(patchwork)
+library(hrbrthemes)
+library(circlize)
+library(networkD3)
+
+# dataframe de données
+df_sankey <- tibble (source = egdes_country_group_first$countryLabelPlace,
+                     target = egdes_country_group_first$countryLabelPartner,
+                     n = egdes_country_group_first$n)
+# créer une lègère différence entre source te target (ici ajout d'un espace) pour les distinguer et les répéter dans nodes 
+df_sankey$target <- paste(df_sankey$target, " ", sep="")
+
+# From these flows we need to create a node data frame: it lists every entities involved in the flow
+nodes <- data.frame(name=c(as.character(df_sankey$source), as.character(df_sankey$target)) %>% unique())
+ 
+# With networkD3, connection must be provided using id, not using real name like in the links dataframe.. So we need to reformat it.
+df_sankey$IDsource=match(df_sankey$source, nodes$name)-1 
+df_sankey$IDtarget=match(df_sankey$target, nodes$name)-1
+
+# prepare colour scale
+ColourScal ='d3.scaleOrdinal() .range(["#FDE725FF","#B4DE2CFF","#6DCD59FF","#35B779FF","#1F9E89FF","#26828EFF","#31688EFF","#3E4A89FF","#482878FF","#440154FF"])'
+
+# Make the Network
+diagram <- sankeyNetwork(Links = df_sankey, Nodes = nodes,
+                     Source = "IDsource", Target = "IDtarget",
+                     Value = "n", NodeID = "name", 
+                     sinksRight=FALSE, colourScale=ColourScal, nodeWidth=40, fontSize=13, nodePadding=20)
+diagram
+```
